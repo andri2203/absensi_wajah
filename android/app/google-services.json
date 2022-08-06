@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "348567531881",
+    "project_id": "absensi-wajah-7342c",
+    "storage_bucket": "absensi-wajah-7342c.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:348567531881:android:b57698e946e41896f0cdf8",
+        "android_client_info": {
+          "package_name": "com.example.absensi_wajah"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "348567531881-2hmca46qqgnvhdihh6hh0176r7l0hqne.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBirmf7DRU_mc-b893W5X1yVPoizHQrFLw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "348567531881-2hmca46qqgnvhdihh6hh0176r7l0hqne.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
