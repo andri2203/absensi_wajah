@@ -4,12 +4,12 @@
         android:label="absensi_wajah"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
-        <!-- <meta-data
-        android:name="com.google.mlkit.vision.DEPENDENCIES"
-        android:value="ica" /> -->
         <meta-data
+        android:name="com.google.mlkit.vision.DEPENDENCIES"
+        android:value="ica" />
+        <!-- <meta-data
          android:name="com.google.firebase.ml.vision.DEPENDENCIES"
-         android:value="ocr" />
+         android:value="ocr" /> -->
         <activity
             android:name=".MainActivity"
             android:exported="true"

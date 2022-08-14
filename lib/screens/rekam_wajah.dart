@@ -29,7 +29,6 @@ class _RekamWajahState extends State<RekamWajah> with WidgetsBindingObserver {
   @override
   void dispose() {
     controller!.dispose();
-    faceDetector!.close();
     super.dispose();
   }
 
@@ -37,9 +36,10 @@ class _RekamWajahState extends State<RekamWajah> with WidgetsBindingObserver {
   bool loading = false;
   CameraController? controller;
   CameraDescription? description;
-  CameraLensDirection lensDirection = CameraLensDirection.front;
+  CameraLensDirection lensDirection = CameraLensDirection.back;
   FaceDetector? faceDetector;
   dynamic result;
+  bool isLoading = false;
 
   Future<void> initCamera() async {
     List<CameraDescription> cameras = await availableCameras();
@@ -108,8 +108,8 @@ class _RekamWajahState extends State<RekamWajah> with WidgetsBindingObserver {
 
   initialized() async {
     await initCamera();
-    initFaceDetector();
-    await frameFaces();
+    // initFaceDetector();
+    // await frameFaces();
   }
 
   void toggleCameraDirection() {
@@ -126,7 +126,6 @@ class _RekamWajahState extends State<RekamWajah> with WidgetsBindingObserver {
         });
       }
 
-      faceDetector!.close();
       setState(() {
         faces = null;
         faceDetector = null;
@@ -229,11 +228,18 @@ class _RekamWajahState extends State<RekamWajah> with WidgetsBindingObserver {
       floatingActionButton: FloatingActionButton(
         child: const Icon(Icons.camera),
         onPressed: () async {
-          if (controller != null) {
-            await controller!.stopImageStream();
-            final XFile capture = await controller!.takePicture();
-            if (mounted) {
-              Navigator.pop(context, File(capture.path));
+          if (controller != null && isLoading == false) {
+            try {
+              controller!.setFlashMode(FlashMode.off);
+              // controller!.stopImageStream();
+              // await Future.delayed(const Duration(milliseconds: 500));
+              final XFile capture = await controller!.takePicture();
+
+              if (mounted) {
+                Navigator.pop(context, File(capture.path));
+              }
+            } on CameraException catch (err) {
+              print(err.description);
             }
           }
         },

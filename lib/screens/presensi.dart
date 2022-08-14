@@ -10,6 +10,8 @@ class Presensi extends StatefulWidget {
 class _PresensiState extends State<Presensi> {
   @override
   Widget build(BuildContext context) {
-    return const Text("Halaman Presensi");
+    return const Scaffold(
+      body: Text("Halaman Presensi"),
+    );
   }
 }

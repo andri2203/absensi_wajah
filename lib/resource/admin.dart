@@ -1,5 +1,4 @@
 import 'package:sqflite/sqflite.dart';
-
 import 'database/database.dart';
 
 class TableAdmin {
@@ -8,29 +7,11 @@ class TableAdmin {
   final String username = "username";
   final String password = "password";
 
-  Database? _db;
-
-  Future<void> _onCreate(Database database, int version) async {
-    await database.execute('''
-    create table $table (
-      $id integer primary key autoincrement,
-      $username text not null,
-      $password text not null,
-    )
-    ''');
+  Future<Database> database() {
+    return DatabaseInstance().database();
   }
 
-  TableAdmin() {
-    if (_db == null) {
-      DatabaseInstance(onCreate: _onCreate).database().then((database) {
-        _db = database;
-        _setDefaultAdminAccount(_db!);
-      }).catchError((err) {
-        // ignore: avoid_print
-        print(err);
-      });
-    }
-  }
+  TableAdmin();
 
   Future<void> _setDefaultAdminAccount(Database db) async {
     String accountDefault = "admin1234";
@@ -46,68 +27,86 @@ class TableAdmin {
   }
 
   Future<Admin?> add(Admin admin) async {
-    if (_db == null) return null;
-    admin.id = await _db?.insert(table, admin.toMap());
+    Database db = await database();
+
+    admin.id = await db.insert(table, admin.toMap());
     return admin;
   }
 
   Future<Admin?> login(String u, String p) async {
-    if (_db == null) return null;
+    Database db = await database();
 
     List<Map<String, Object?>>? maps = [];
 
-    maps = await _db?.query(
+    maps = await db.query(
       table,
       columns: [id, username, password],
       where: "$username = ? AND $password = ?",
       whereArgs: [u, p],
     );
 
-    if (maps != null) {
+    if (maps.isNotEmpty) {
       return Admin.fromMap(maps.first);
     }
 
-    return null;
+    _setDefaultAdminAccount(db);
+    return await add(Admin.fromMap({
+      username: u,
+      password: p,
+    }));
   }
 
   Future<Admin?> getAdminById(int adminID) async {
-    if (_db == null) return null;
+    Database db = await database();
 
     List<Map<String, Object?>>? maps = [];
 
-    maps = await _db?.query(
+    maps = await db.query(
       table,
       columns: [id, username, password],
       where: "$id = ?",
       whereArgs: [adminID],
     );
 
-    if (maps != null) {
-      return Admin.fromMap(maps.first);
-    }
-
-    return null;
+    return Admin.fromMap(maps.first);
   }
 
   Future<List<Admin>?> getAllAdmin() async {
-    if (_db == null) return null;
+    Database db = await database();
 
     List<Admin>? admins = <Admin>[];
 
-    List<Map<String, Object?>>? maps = await _db?.query(
+    List<Map<String, Object?>>? maps = await db.query(
       table,
       columns: [id, username, password],
     );
 
-    if (maps != null) {
-      for (var i = 0; i < maps.length; i++) {
-        admins.add(Admin.fromMap(maps[i]));
-      }
-
-      return admins;
+    for (var i = 0; i < maps.length; i++) {
+      admins.add(Admin.fromMap(maps[i]));
     }
 
-    return null;
+    return admins;
+  }
+
+  Future<int> update(Admin admin) async {
+    Database db = await database();
+
+    return await db.update(
+      table,
+      admin.toMap(),
+      where: "$id = ?",
+      whereArgs: [admin.id],
+    );
+  }
+
+  Future<int> delete(int idAdmin) async {
+    Database db = await database();
+
+    return await db.delete(
+      table,
+      where: "$id = ?",
+      whereArgs: [idAdmin],
+    );
   }
 }
 
