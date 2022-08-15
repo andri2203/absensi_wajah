@@ -197,15 +197,17 @@ class _InputPesertaState extends State<InputPeserta>
           // ignore: use_build_context_synchronously
           ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text("Data Berhasil Di Tambah")));
+        } else {
+          // ignore: use_build_context_synchronously
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text("Data Gagal Di Tambah")));
         }
-        // ignore: use_build_context_synchronously
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Data Gagal Di Tambah")));
       }
+    } else {
+      // ignore: use_build_context_synchronously
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text("Mohon Periksa Field dan Gambar Wajah")));
     }
-    // ignore: use_build_context_synchronously
-    ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Mohon Periksa Field dan Gambar Wajah")));
   }
 
   handleUpdateData() async {

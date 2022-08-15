@@ -44,7 +44,6 @@ dependencies:
   shared_preferences: ^2.0.15
   quiver: ^3.1.0
   date_time_picker: ^2.1.0
-  date_range_picker: ^1.0.7
   pdf: ^3.8.2
 
 dev_dependencies:
