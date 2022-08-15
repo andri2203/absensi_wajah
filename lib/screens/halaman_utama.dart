@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:absensi_wajah/screens/akun_admin.dart';
+import 'package:absensi_wajah/utils/date_time.dart';
 import 'package:absensi_wajah/resource/absensi.dart';
 import 'package:absensi_wajah/resource/admin.dart';
 import 'package:absensi_wajah/resource/mahasiswa.dart';
@@ -36,10 +38,13 @@ class _HalamanUtamaState extends State<HalamanUtama> {
   File? imageFile;
   Size imageSize = const Size(0, 0);
   dynamic scanResult;
-  TableMahasiswa tableMahasiswa = TableMahasiswa();
+  TableMahasiswa tbMahasiswa = TableMahasiswa();
+  List<Map<String, Object?>> dataMahasiswa = [];
+  List<Absensi?> dtAbsensi = [];
   TableAbsensi tbAbsensi = TableAbsensi();
   bool isLoading = false;
   late Mahasiswa mahasiswa;
+  Absensi? absensi;
   late int waktu;
 
   List? e1;
@@ -61,6 +66,7 @@ class _HalamanUtamaState extends State<HalamanUtama> {
   final TextEditingController prodi = TextEditingController();
   final TextEditingController kdAbsen = TextEditingController();
   final TextEditingController kdMK = TextEditingController();
+  String? seacrh;
 
   @override
   void initState() {
@@ -71,6 +77,7 @@ class _HalamanUtamaState extends State<HalamanUtama> {
   void start() {
     admin = widget.admin;
     initJsonFile();
+    getDataMahasiswa();
   }
 
   initJsonFile() async {
@@ -122,6 +129,7 @@ class _HalamanUtamaState extends State<HalamanUtama> {
   }
 
   Future handleAbsenMasuk(BuildContext context, String? status) async {
+    getDataMahasiswa();
     initJsonFile();
     setState(() {
       imageFile = null;
@@ -134,6 +142,7 @@ class _HalamanUtamaState extends State<HalamanUtama> {
       semester.text = '';
       unit.text = '';
       prodi.text = '';
+      absensi = null;
     });
     final files = (await Navigator.push<File>(
       context,
@@ -192,7 +201,12 @@ class _HalamanUtamaState extends State<HalamanUtama> {
         }
 
         if (res != "TIDAK DIKENALI") {
-          mhs = (await tableMahasiswa.getByNim(res!))!;
+          mhs = (await tbMahasiswa.getByNim(res!))!;
+          List<Absensi?> list = (await tbAbsensi.getByIdMahasiswa(mhs.id!))
+              .where((dt) => dt!.keluar == 0)
+              .toList();
+          Absensi? absen = list.isNotEmpty ? list.last : null;
+
           setState(() {
             isDetected = true;
             isLoading = false;
@@ -205,10 +219,39 @@ class _HalamanUtamaState extends State<HalamanUtama> {
             mahasiswa = mhs;
             scanResult = res;
             waktu = DateTime.now().millisecondsSinceEpoch;
+            if (absen != null) {
+              absensi = absen.keluar == 0 ? absen : null;
+              kdMK.text = absen.id == null ? "" : absen.kodeMK!;
+            }
           });
+        } else {
+          // ignore: use_build_context_synchronously
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text("Wajah Tidak Terdeteksi")));
         }
       }
     }
+  }
+
+  Future<void> getDataMahasiswa() async {
+    List<Map<String, Object?>> dt = [];
+    List<Mahasiswa?> maps = [];
+    maps = (await tbMahasiswa.get())!;
+
+    for (var i = 0; i < maps.length; i++) {
+      dt.add(maps[i]!.toMap());
+    }
+
+    setState(() {
+      dataMahasiswa = dt;
+    });
+  }
+
+  Future<List<Absensi?>> getDataAbsensi() async {
+    Map<String, int> date = startEndDay(DateTime.now());
+    List<Absensi?> maps = [];
+    maps = (await tbAbsensi.getOneDayOnly(date['start']!, date['end']!));
+    return maps;
   }
 
   Future<void> handleSimpanData() async {
@@ -217,7 +260,7 @@ class _HalamanUtamaState extends State<HalamanUtama> {
 
     if (isDetected == true) {
       if (form.currentState!.validate()) {
-        if (status == "Masuk") {
+        if (status == "Masuk" && absensi == null) {
           simpanDataMasuk(status);
         } else {
           simpanDataKeluar(status);
@@ -254,6 +297,8 @@ class _HalamanUtamaState extends State<HalamanUtama> {
         waktu = 0;
         imageFile = null;
         e1 = null;
+        kdMK.text = "";
+        absensi = null;
       });
       // ignore: use_build_context_synchronously
       ScaffoldMessenger.of(context).showSnackBar(
@@ -265,7 +310,43 @@ class _HalamanUtamaState extends State<HalamanUtama> {
     }
   }
 
-  Future<void> simpanDataKeluar(String status) async {}
+  Future<void> simpanDataKeluar(String status) async {
+    Map<String, dynamic> map = {
+      tbAbsensi.id: absensi!.id,
+      tbAbsensi.idMahasiswa: absensi!.idMahasiswa,
+      tbAbsensi.masuk: absensi!.masuk,
+      tbAbsensi.keluar: waktu,
+      tbAbsensi.status: "Keluar",
+      tbAbsensi.kodeMK: absensi!.kodeMK,
+    };
+
+    int update = await tbAbsensi.update(Absensi.fromMap(map));
+    if (update > 0) {
+      setState(() {
+        isDetected = false;
+        kdAbsen.text = "";
+        nim.text = "";
+        nama.text = "";
+        semester.text = "";
+        unit.text = "";
+        prodi.text = "";
+        scanResult = null;
+        waktu = 0;
+        imageFile = null;
+        e1 = null;
+        absensi = null;
+        kdMK.text = "";
+      });
+
+      // ignore: use_build_context_synchronously
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text("Data Berhasil Di Ubah")));
+    } else {
+      // ignore: use_build_context_synchronously
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text("Gagal Merubah data. Silahkan Perikasa")));
+    }
+  }
 
   Size imageSized(BuildContext context) {
     return Size(MediaQuery.of(context).size.width - 240,
@@ -304,30 +385,29 @@ class _HalamanUtamaState extends State<HalamanUtama> {
               ),
             ),
           Card(
-            margin: const EdgeInsets.only(left: 15, right: 15, bottom: 15),
+            margin: const EdgeInsets.only(
+              left: 15,
+              right: 15,
+              bottom: 15,
+              top: 10,
+            ),
             elevation: 5,
             child: SizedBox(
               width: MediaQuery.of(context).size.width,
               child: imageFile == null
                   ? Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        ElevatedButton(
-                            onPressed: () {
-                              handleAbsenMasuk(context, "Masuk");
-                            },
-                            child: const Text("Absen Masuk")),
-                        ElevatedButton(
-                            onPressed: () async {
-                              // handleAbsenMasuk(context, "Keluar");
-                              var data = await tbAbsensi.get();
-                              for (var i = 0; i < data.length; i++) {
-                                print(data[i]?.status);
-                              }
-                            },
-                            child: const Text(
-                              "Absen Keluar",
-                            )),
+                        dateInfo(),
+                        absenMasukKeluar(context),
+                        Expanded(
+                          child: Container(
+                            width: MediaQuery.of(context).size.width,
+                            height: MediaQuery.of(context).size.height,
+                            padding: const EdgeInsets.only(
+                                bottom: 10, left: 10, right: 10, top: 5),
+                            child: dataBuilder(),
+                          ),
+                        ),
                       ],
                     )
                   : Column(
@@ -340,6 +420,29 @@ class _HalamanUtamaState extends State<HalamanUtama> {
                     ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget absenMasukKeluar(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(8.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          ElevatedButton(
+              onPressed: () {
+                handleAbsenMasuk(context, "Masuk");
+              },
+              child: const Text("Absen Masuk")),
+          ElevatedButton(
+              onPressed: () {
+                handleAbsenMasuk(context, "Keluar");
+              },
+              child: const Text(
+                "Absen Keluar",
+              )),
         ],
       ),
     );
@@ -408,6 +511,7 @@ class _HalamanUtamaState extends State<HalamanUtama> {
               semester.text = '';
               unit.text = '';
               prodi.text = '';
+              absensi = null;
             });
           },
         ),
@@ -512,7 +616,7 @@ class _HalamanUtamaState extends State<HalamanUtama> {
                 if (interpreter != null && !interpreter!.isDeleted) {
                   interpreter!.close();
                 }
-                return const InputPeserta();
+                return const AkunAdmin();
               }),
             ),
           ),
@@ -589,6 +693,121 @@ class _HalamanUtamaState extends State<HalamanUtama> {
             child: Text(label),
           ),
           border: const OutlineInputBorder(),
+        ),
+      ),
+    );
+  }
+
+  Widget dateInfo() {
+    Map<String, int> date = startEndDay(DateTime.now());
+    String day = dateTime(DateTime.now(), disabledHour: true);
+    String start = dateTime(
+      DateTime.fromMillisecondsSinceEpoch(date['start']!),
+      disabledDay: true,
+    );
+    String end = dateTime(
+      DateTime.fromMillisecondsSinceEpoch(date['end']!),
+      disabledDay: true,
+    );
+    return Container(
+      margin: const EdgeInsets.only(top: 20),
+      child: Center(
+        child: Text(
+          "$day $start sampai $end",
+          style: const TextStyle(
+            fontWeight: FontWeight.w600,
+            fontSize: 16,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget seacrhBar() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: TextField(
+        onChanged: (value) {
+          setState(() {
+            seacrh = value;
+          });
+        },
+        decoration: const InputDecoration(
+          hintText: "Cari Mahasiswa",
+          suffixIcon: Icon(Icons.search),
+          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.all(Radius.circular(25)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget dataBuilder() {
+    return FutureBuilder<List<Absensi?>>(
+      future: getDataAbsensi(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.done) {
+          if (snapshot.data != null) {
+            List<Absensi?> dataAbsensi = snapshot.data!;
+
+            return ListView.builder(
+              itemCount: dataAbsensi.length,
+              itemBuilder: (context, index) {
+                return dataList(context, dataAbsensi[index]);
+              },
+            );
+          } else {
+            return const Center(
+              child: Text("Data Tidak Ditemukan."),
+            );
+          }
+        }
+
+        return const Center(
+          child: CircularProgressIndicator(),
+        );
+      },
+    );
+  }
+
+  Card dataList(BuildContext context, Absensi? absensi) {
+    int index = dataMahasiswa.indexWhere(
+      (element) => element[tbMahasiswa.id].toString() == absensi!.idMahasiswa,
+    );
+
+    Mahasiswa? mhs = Mahasiswa.fromMap(dataMahasiswa[index]);
+    DateTime masuk = DateTime.fromMillisecondsSinceEpoch(absensi!.masuk!);
+    DateTime keluar = DateTime.fromMillisecondsSinceEpoch(absensi.keluar!);
+
+    return Card(
+      child: ListTile(
+        title: Text(
+          "${mhs.nama} (${mhs.nim!})",
+          style: const TextStyle(
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "Kode Mata Kuliah (${absensi.kodeMK!.toUpperCase()})",
+              style: const TextStyle(color: Colors.lightBlue),
+            ),
+            Text(
+              "Masuk ${dateTime(masuk)}",
+              style: const TextStyle(color: Colors.lightGreen),
+            ),
+            Text(
+              absensi.keluar! == 0
+                  ? "Sedang Melangsungkan Pembelajaran"
+                  : "Keluar ${dateTime(keluar)}",
+              style: TextStyle(color: Colors.redAccent[700]),
+            ),
+          ],
         ),
       ),
     );

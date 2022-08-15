@@ -10,8 +10,11 @@ class Laporan extends StatefulWidget {
 class _LaporanState extends State<Laporan> {
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Text("Halaman Laporan"),
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Laporan Absensi"),
+      ),
+      body: const Text("Halaman Laporan"),
     );
   }
 }

@@ -68,8 +68,15 @@ class TableMahasiswa {
     return Mahasiswa.fromMap(maps.first);
   }
 
-  Future<Mahasiswa?> update(Mahasiswa mahasiswa) async {
-    return null;
+  Future<int> update(Mahasiswa mahasiswa) async {
+    Database db = await database();
+
+    return await db.update(
+      table,
+      mahasiswa.toMap(),
+      where: "$id = ?",
+      whereArgs: [mahasiswa.id],
+    );
   }
 
   Future<Mahasiswa?> delete(Mahasiswa mahasiswa) async {

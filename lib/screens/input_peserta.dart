@@ -43,6 +43,7 @@ class _InputPesertaState extends State<InputPeserta>
   late AnimationController controller;
   bool isCreateData = false;
   bool isLoading = false;
+  Mahasiswa? peserta;
 
   @override
   void initState() {
@@ -93,6 +94,7 @@ class _InputPesertaState extends State<InputPeserta>
 
       if (mounted) {
         if (interpreter != null) {
+          String? response;
           for (face in faces) {
             double x, y, w, h;
             x = (face.boundingBox.left - 10);
@@ -103,17 +105,50 @@ class _InputPesertaState extends State<InputPeserta>
                 image!, x.round(), y.round(), w.round(), h.round());
             croppedImage = imglib.copyResizeCropSquare(croppedImage, 112);
             res = recog(interpreter, croppedImage);
+            response = res;
             finalResult.add(res, face);
           }
 
-          setState(() {
-            imageFile = file;
-            imageSize = Size(image!.width.toDouble(), image.height.toDouble());
-            scanResult = finalResult;
-            isLoading = false;
-          });
+          if (response != null) {
+            interpreter.close();
+            if (response == "TIDAK DIKENALI") {
+              setState(() {
+                imageFile = file;
+                imageSize =
+                    Size(image!.width.toDouble(), image.height.toDouble());
+                scanResult = finalResult;
+                isLoading = false;
+              });
 
-          interpreter.close();
+              // ignore: use_build_context_synchronously
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                  content:
+                      Text("Wajah Tidak Dikenal. Silahkan Tambah Mahasiswa")));
+            } else {
+              Mahasiswa mhs = (await tbMahasiswa.getByNim(response))!;
+              setState(() {
+                imageFile = File(mhs.foto!);
+                peserta = mhs;
+                nim.text = mhs.nim!;
+                nama.text = mhs.nama!;
+                semester.text = mhs.semester!;
+                unit.text = mhs.unit!;
+                prodi.text = mhs.prodi!;
+                isLoading = false;
+              });
+              // ignore: use_build_context_synchronously
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content: Text(
+                    "Wajah Di Dikenal. Silahkan Ubah Data. Jika Diperlukan."),
+              ));
+            }
+          } else {
+            interpreter.close();
+            // ignore: use_build_context_synchronously
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                content:
+                    Text("Tidak ada wajah di gambar. Silahkan Foto Ulang")));
+          }
         }
       }
     }
@@ -159,7 +194,53 @@ class _InputPesertaState extends State<InputPeserta>
             unit.text = '';
             prodi.text = '';
           });
+          // ignore: use_build_context_synchronously
+          ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text("Data Berhasil Di Tambah")));
         }
+        // ignore: use_build_context_synchronously
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Data Gagal Di Tambah")));
+      }
+    }
+    // ignore: use_build_context_synchronously
+    ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Mohon Periksa Field dan Gambar Wajah")));
+  }
+
+  handleUpdateData() async {
+    if (form.currentState!.validate()) {
+      Map<String, Object?> map = {
+        tbMahasiswa.id: peserta!.id,
+        tbMahasiswa.nim: nim.text,
+        tbMahasiswa.nama: nama.text,
+        tbMahasiswa.semester: semester.text,
+        tbMahasiswa.unit: unit.text,
+        tbMahasiswa.prodi: prodi.text,
+        tbMahasiswa.foto: peserta!.foto,
+      };
+
+      Mahasiswa data = Mahasiswa.fromMap(map);
+      int update = await tbMahasiswa.update(data);
+
+      if (update > 0) {
+        setState(() {
+          isCreateData = false;
+          imageFile = null;
+          peserta = null;
+          nim.text = '';
+          nama.text = '';
+          semester.text = '';
+          unit.text = '';
+          prodi.text = '';
+        });
+        // ignore: use_build_context_synchronously
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Data Berhasil Di Ubah")));
+      } else {
+        // ignore: use_build_context_synchronously
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text("Data gagal Di Ubah. Mohon Coba Lagi.")));
       }
     }
   }
@@ -253,7 +334,7 @@ class _InputPesertaState extends State<InputPeserta>
           ? ElevatedButton.icon(
               icon: const Icon(Icons.add),
               label: const Text("Tambah Mahasiswa"),
-              onPressed: () async {
+              onPressed: () {
                 setState(() {
                   isCreateData = !isCreateData;
                 });
@@ -278,9 +359,10 @@ class _InputPesertaState extends State<InputPeserta>
               ),
               const SizedBox(width: 10),
               ElevatedButton.icon(
-                icon: const Icon(Icons.save),
-                label: const Text("Simpan"),
-                onPressed: handleSimpanData,
+                icon: Icon(peserta == null ? Icons.save : Icons.edit),
+                label: Text(peserta == null ? "Simpan" : "Ubah"),
+                onPressed:
+                    peserta == null ? handleSimpanData : handleUpdateData,
               ),
             ]),
     );
@@ -296,24 +378,24 @@ class _InputPesertaState extends State<InputPeserta>
           key: form,
           child: Column(
             children: [
-              imageFile == null
-                  ? Center(
-                      child: ElevatedButton.icon(
-                        onPressed: handleRekamWajah,
-                        icon: const Icon(Icons.camera_alt),
-                        label: const Text("Rekam Wajah"),
-                      ),
-                    )
-                  : Container(
-                      padding: const EdgeInsets.all(10),
-                      child: SizedBox(
-                        width: MediaQuery.of(context).size.width * 0.3,
-                        child: Image.file(
-                          imageFile!,
-                          fit: BoxFit.fitWidth,
-                        ),
-                      ),
+              if (imageFile != null)
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  child: SizedBox(
+                    width: MediaQuery.of(context).size.width * 0.3,
+                    child: Image.file(
+                      imageFile!,
+                      fit: BoxFit.fitWidth,
                     ),
+                  ),
+                ),
+              Center(
+                child: ElevatedButton.icon(
+                  onPressed: handleRekamWajah,
+                  icon: const Icon(Icons.camera_alt),
+                  label: const Text("Rekam Wajah"),
+                ),
+              ),
               textField(
                 controller: nim,
                 label: "Nim",
@@ -402,11 +484,31 @@ class _InputPesertaState extends State<InputPeserta>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(mhs.nim!),
-            Text("${mhs.semester} / ${mhs.unit}"),
+            Text("Semester ${mhs.semester} / Unit ${mhs.unit}"),
             Text("${mhs.prodi}"),
           ],
         ),
-        trailing: const Icon(Icons.more_vert),
+        leading: Container(
+          margin: const EdgeInsets.only(bottom: 10),
+          child: Image.file(File(mhs.foto!), fit: BoxFit.fitWidth, width: 50),
+        ),
+        trailing: IconButton(
+            onPressed: () {
+              setState(() {
+                isCreateData = true;
+                imageFile = File(mhs.foto!);
+                peserta = mhs;
+                nim.text = mhs.nim!;
+                nama.text = mhs.nama!;
+                semester.text = mhs.semester!;
+                unit.text = mhs.unit!;
+                prodi.text = mhs.prodi!;
+              });
+            },
+            icon: const Icon(
+              Icons.edit,
+              color: Colors.green,
+            )),
       ),
     );
   }

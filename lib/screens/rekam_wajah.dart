@@ -36,7 +36,7 @@ class _RekamWajahState extends State<RekamWajah> with WidgetsBindingObserver {
   bool loading = false;
   CameraController? controller;
   CameraDescription? description;
-  CameraLensDirection lensDirection = CameraLensDirection.back;
+  CameraLensDirection lensDirection = CameraLensDirection.front;
   FaceDetector? faceDetector;
   dynamic result;
   bool isLoading = false;
@@ -239,7 +239,9 @@ class _RekamWajahState extends State<RekamWajah> with WidgetsBindingObserver {
                 Navigator.pop(context, File(capture.path));
               }
             } on CameraException catch (err) {
-              print(err.description);
+              // ignore: use_build_context_synchronously
+              ScaffoldMessenger.of(context)
+                  .showSnackBar(SnackBar(content: Text(err.description!)));
             }
           }
         },

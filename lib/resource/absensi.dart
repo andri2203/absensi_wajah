@@ -30,6 +30,27 @@ class TableAbsensi {
     maps = await db.query(
       table,
       columns: [id, idMahasiswa, masuk, keluar, status, kodeMK],
+      orderBy: "$masuk DESC",
+    );
+
+    for (var i = 0; i < maps.length; i++) {
+      data.add(Absensi.fromMap(maps[i]));
+    }
+
+    return data;
+  }
+
+  Future<List<Absensi?>> getOneDayOnly(int start, int end) async {
+    Database db = await database();
+    List<Map<String, Object?>> maps = [];
+    List<Absensi?> data = [];
+
+    maps = await db.query(
+      table,
+      columns: [id, idMahasiswa, masuk, keluar, status, kodeMK],
+      where: "$masuk > ? AND $masuk < ?",
+      whereArgs: [start, end],
+      orderBy: "$masuk DESC",
     );
 
     for (var i = 0; i < maps.length; i++) {
@@ -77,8 +98,15 @@ class TableAbsensi {
     return data;
   }
 
-  Future<Absensi?> update(int id, Absensi absensi) async {
-    return null;
+  Future<int> update(Absensi absensi) async {
+    Database db = await database();
+
+    return await db.update(
+      table,
+      absensi.toMap(),
+      where: "$id = ?",
+      whereArgs: [absensi.id],
+    );
   }
 
   Future<Absensi?> delete(int id) async {

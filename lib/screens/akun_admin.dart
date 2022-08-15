@@ -10,8 +10,11 @@ class AkunAdmin extends StatefulWidget {
 class _AkunAdminState extends State<AkunAdmin> {
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Text("Halaman Akun Admin"),
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Akun Admin"),
+      ),
+      body: const Text("Halaman Akun Admin"),
     );
   }
 }
