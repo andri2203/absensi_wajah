@@ -13,7 +13,7 @@ class TableAdmin {
 
   TableAdmin();
 
-  Future<void> _setDefaultAdminAccount(Database db) async {
+  Future<Admin?> _setDefaultAdminAccount(Database db) async {
     String accountDefault = "admin1234";
     Map<String, Object?> account = {
       username: accountDefault,
@@ -22,8 +22,10 @@ class TableAdmin {
     Admin? adminAccount = await login(accountDefault, accountDefault);
 
     if (adminAccount == null) {
-      await add(Admin.fromMap(account));
+      return await add(Admin.fromMap(account));
     }
+
+    return adminAccount;
   }
 
   Future<Admin?> add(Admin admin) async {
@@ -49,11 +51,11 @@ class TableAdmin {
       return Admin.fromMap(maps.first);
     }
 
-    _setDefaultAdminAccount(db);
-    return await add(Admin.fromMap({
-      username: u,
-      password: p,
-    }));
+    if (username == "admin1234" && password == "admin1234") {
+      return await _setDefaultAdminAccount(db);
+    }
+
+    return null;
   }
 
   Future<Admin?> getAdminById(int adminID) async {

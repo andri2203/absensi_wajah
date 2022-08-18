@@ -611,14 +611,17 @@ class _HalamanUtamaState extends State<HalamanUtama> {
           ),
           ListTile(
             title: const Text("Akun Admin"),
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (context) {
-                if (interpreter != null && !interpreter!.isDeleted) {
-                  interpreter!.close();
-                }
-                return const AkunAdmin();
-              }),
-            ),
+            onTap: () async {
+              String? logout = await Navigator.of(context).push<String>(
+                MaterialPageRoute(builder: (context) {
+                  if (interpreter != null && !interpreter!.isDeleted) {
+                    interpreter!.close();
+                  }
+                  return const AkunAdmin();
+                }),
+              );
+              if (logout != null) _logout();
+            },
           ),
           ListTile(
             title: const Text("Keluar"),

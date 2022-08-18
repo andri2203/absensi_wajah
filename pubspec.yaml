@@ -45,6 +45,10 @@ dependencies:
   quiver: ^3.1.0
   date_time_picker: ^2.1.0
   pdf: ^3.8.2
+  open_filex: ^3.4.0
+  url_launcher: ^6.1.5
+  flutter_pdfview: ^1.2.3
+  share_plus: ^4.0.10+1
 
 dev_dependencies:
   flutter_test:
