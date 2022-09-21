@@ -1,16 +1,20 @@
-import 'dart:convert';
+import 'dart:async';
 import 'dart:io';
 
 import 'package:absensi_wajah/resource/mahasiswa.dart';
 import 'package:absensi_wajah/screens/rekam_wajah.dart';
 import 'package:absensi_wajah/utils/model.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as imglib;
 import 'package:google_ml_kit/google_ml_kit.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:quiver/collection.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
-import 'package:path/path.dart' as path;
+import '../firebase/auth_service.dart';
+import '../firebase/firestore.dart';
 import '../utils/utils.dart';
 
 class InputPeserta extends StatefulWidget {
@@ -22,7 +26,6 @@ class InputPeserta extends StatefulWidget {
 
 class _InputPesertaState extends State<InputPeserta>
     with SingleTickerProviderStateMixin {
-  final TableMahasiswa tbMahasiswa = TableMahasiswa();
   List<Mahasiswa?> mahasiswa = [];
   final GlobalKey<FormState> form = GlobalKey<FormState>();
   final TextEditingController nim = TextEditingController();
@@ -30,6 +33,9 @@ class _InputPesertaState extends State<InputPeserta>
   final TextEditingController semester = TextEditingController();
   final TextEditingController unit = TextEditingController();
   final TextEditingController prodi = TextEditingController();
+  final TextEditingController email = TextEditingController();
+  final TextEditingController password = TextEditingController();
+
   File? imageFile;
   Size imageSize = const Size(0, 0);
   List? e1;
@@ -44,27 +50,33 @@ class _InputPesertaState extends State<InputPeserta>
   bool isCreateData = false;
   bool isLoading = false;
   Mahasiswa? peserta;
+  String? userID;
+
+  GlobalKey<ScaffoldMessengerState> scaffold =
+      GlobalKey<ScaffoldMessengerState>();
 
   @override
   void initState() {
     super.initState();
-    initJsonFile();
+    ambilDataWajah();
     controller = AnimationController(vsync: this);
   }
 
-  initJsonFile() async {
-    tempDir = await getApplicationDocumentsDirectory();
-    String embPath = '${tempDir!.path}/emb.json';
-    jsonFile = File(embPath);
-    if (jsonFile.existsSync()) {
-      data = json.decode(jsonFile.readAsStringSync());
-    }
-  }
+  ambilDataWajah() async {
+    final snapshot = await FirestoreDatabase.collection("users")
+        .where("role", isEqualTo: "mahasiswa")
+        .get();
+    final dataWajah = snapshot.docs.map((e) {
+      Map<String, Object?> map = {e.id: e.data()["info"]["dataWajah"]};
+      return map;
+    }).toList();
+    Map<String, dynamic> maps = {};
 
-  Future<List<Mahasiswa?>> getData() async {
-    List<Mahasiswa?> maps = [];
-    maps = (await tbMahasiswa.get())!;
-    return maps;
+    for (var item in dataWajah) {
+      maps[item.keys.first] = item[item.keys.first];
+    }
+
+    data = maps;
   }
 
   handleRekamWajah() async {
@@ -76,6 +88,8 @@ class _InputPesertaState extends State<InputPeserta>
     );
 
     if (file != null) {
+      // initJsonFile();
+      ambilDataWajah();
       setState(() {
         isLoading = true;
       });
@@ -111,7 +125,7 @@ class _InputPesertaState extends State<InputPeserta>
 
           if (response != null) {
             interpreter.close();
-            if (response == "TIDAK DIKENALI") {
+            if (response == "Tidak dikenali") {
               setState(() {
                 imageFile = file;
                 imageSize =
@@ -121,13 +135,18 @@ class _InputPesertaState extends State<InputPeserta>
               });
 
               // ignore: use_build_context_synchronously
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              scaffold.currentState!.showSnackBar(const SnackBar(
                   content:
                       Text("Wajah Tidak Dikenal. Silahkan Tambah Mahasiswa")));
             } else {
-              Mahasiswa mhs = (await tbMahasiswa.getByNim(response))!;
+              DocumentSnapshot<Map<String, Object?>> qry =
+                  await FirestoreDatabase.collection("users")
+                      .doc(response)
+                      .get();
+              Mahasiswa mhs = Mahasiswa.fromFirestoreMap(
+                  qry.id, qry.data()!["info"] as Map<String, Object?>);
               setState(() {
-                imageFile = File(mhs.foto!);
+                imageFile = null;
                 peserta = mhs;
                 nim.text = mhs.nim!;
                 nama.text = mhs.nama!;
@@ -135,9 +154,10 @@ class _InputPesertaState extends State<InputPeserta>
                 unit.text = mhs.unit!;
                 prodi.text = mhs.prodi!;
                 isLoading = false;
+                userID = mhs.uid;
               });
               // ignore: use_build_context_synchronously
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              scaffold.currentState!.showSnackBar(const SnackBar(
                 content: Text(
                     "Wajah Di Dikenal. Silahkan Ubah Data. Jika Diperlukan."),
               ));
@@ -145,7 +165,7 @@ class _InputPesertaState extends State<InputPeserta>
           } else {
             interpreter.close();
             // ignore: use_build_context_synchronously
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            scaffold.currentState!.showSnackBar(const SnackBar(
                 content:
                     Text("Tidak ada wajah di gambar. Silahkan Foto Ulang")));
           }
@@ -164,26 +184,63 @@ class _InputPesertaState extends State<InputPeserta>
     return newFile;
   }
 
-  handleSimpanData() async {
-    String newPath = await getPath();
+  simpanData() {
+    var storageRef = FirebaseStorage.instance.ref();
     if (form.currentState!.validate() && e1 != null) {
-      String basNameWithExt = path.basename(imageFile!.path);
-      File newFile = await moveFile(imageFile!, "$newPath/$basNameWithExt");
-      Map<String, Object?> maps = {
-        tbMahasiswa.nim: nim.text,
-        tbMahasiswa.nama: nama.text,
-        tbMahasiswa.semester: semester.text,
-        tbMahasiswa.unit: unit.text,
-        tbMahasiswa.prodi: prodi.text,
-        tbMahasiswa.foto: newFile.path,
-      };
-      Mahasiswa? mhs = await tbMahasiswa.add(Mahasiswa.fromMap(maps));
+      FirestoreDatabase.instance.runTransaction((transaction) async {
+        CollectionReference<Map<String, dynamic>> ref =
+            FirestoreDatabase.instance.collection("users");
+        Query<Map<String, dynamic>> query = ref.where(
+          "info.nim",
+          isEqualTo: nim.text,
+        );
+        QuerySnapshot<Map<String, dynamic>> snapshot = await query.get();
 
-      if (mounted) {
-        if (mhs != null) {
-          data[mhs.nim] = e1;
-          jsonFile.writeAsStringSync(json.encode(data));
-          getData();
+        if (snapshot.docs.isNotEmpty) {
+          scaffold.currentState!.showSnackBar(const SnackBar(
+            content: Text("NIM yang anda gunakan telah terdaftar"),
+          ));
+
+          return;
+        }
+
+        var fotoMahasiswa = storageRef.child("foto/${nim.text}.jpg");
+        await fotoMahasiswa.putFile(imageFile!);
+        var lokasiFoto = await fotoMahasiswa.getDownloadURL();
+
+        try {
+          User? user = await AuthService.signUp(
+            email.text,
+            password.text,
+            scaffold.currentState!,
+          );
+
+          if (user == null) {
+            scaffold.currentState!.showSnackBar(const SnackBar(
+              content: Text("Gagal Menambah Data"),
+            ));
+
+            return;
+          }
+
+          Map<String, Object?> maps = {
+            "name": nama.text,
+            "email": email.text,
+            "password": password.text,
+            "role": "mahasiswa",
+            "info": {
+              "nim": nim.text,
+              "nama": nama.text,
+              "semester": semester.text,
+              "unit": unit.text,
+              "prodi": prodi.text,
+              "foto": lokasiFoto,
+              "dataWajah": e1,
+            },
+          };
+
+          transaction.set(ref.doc(user.uid), maps);
+
           setState(() {
             isCreateData = false;
             imageFile = null;
@@ -194,38 +251,73 @@ class _InputPesertaState extends State<InputPeserta>
             unit.text = '';
             prodi.text = '';
           });
-          // ignore: use_build_context_synchronously
-          ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text("Data Berhasil Di Tambah")));
-        } else {
-          // ignore: use_build_context_synchronously
-          ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text("Data Gagal Di Tambah")));
+
+          scaffold.currentState!.showSnackBar(SnackBar(
+            content: Text(
+                "Akun Mahasiswa Berhasil Ditambahkan. Anda akan diarahkan ke akun ${user.email}"),
+          ));
+
+          if (mounted) {
+            Navigator.of(context).pop();
+          }
+        } catch (error) {
+          if (mounted) {
+            AuthService.delete(
+                email.text, password.text, scaffold.currentState!);
+
+            scaffold.currentState!.showSnackBar(SnackBar(
+              content: Text("Gagal Auth: $error"),
+            ));
+          }
         }
-      }
+      }).catchError((error) {
+        scaffold.currentState!.showSnackBar(SnackBar(
+          content: Text("Gagal Transaction: $error"),
+        ));
+      });
     } else {
       // ignore: use_build_context_synchronously
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      scaffold.currentState!.showSnackBar(const SnackBar(
           content: Text("Mohon Periksa Field dan Gambar Wajah")));
     }
   }
 
   handleUpdateData() async {
     if (form.currentState!.validate()) {
-      Map<String, Object?> map = {
-        tbMahasiswa.id: peserta!.id,
-        tbMahasiswa.nim: nim.text,
-        tbMahasiswa.nama: nama.text,
-        tbMahasiswa.semester: semester.text,
-        tbMahasiswa.unit: unit.text,
-        tbMahasiswa.prodi: prodi.text,
-        tbMahasiswa.foto: peserta!.foto,
-      };
+      FirestoreDatabase.instance.runTransaction((transaction) async {
+        CollectionReference<Map<String, dynamic>> userRef =
+            FirestoreDatabase.collection("users");
 
-      Mahasiswa data = Mahasiswa.fromMap(map);
-      int update = await tbMahasiswa.update(data);
+        Query<Map<String, dynamic>> query = userRef.where(
+          "info.nim",
+          isEqualTo: nim.text,
+        );
 
-      if (update > 0) {
+        QuerySnapshot<Map<String, dynamic>> snapshot = await query.get();
+
+        if (snapshot.docs.isNotEmpty) {
+          scaffold.currentState!.showSnackBar(const SnackBar(
+            content: Text("NIM yang anda gunakan telah terdaftar"),
+          ));
+
+          return;
+        }
+
+        Map<String, Object?> map = {
+          "name": nama.text,
+          "info": {
+            "nim": nim.text,
+            "nama": nama.text,
+            "semester": semester.text,
+            "unit": unit.text,
+            "prodi": prodi.text,
+            "foto": peserta!.foto,
+            "dataWajah": peserta!.dataWajah,
+          },
+        };
+
+        transaction.update(userRef.doc(userID), map);
+
         setState(() {
           isCreateData = false;
           imageFile = null;
@@ -236,14 +328,12 @@ class _InputPesertaState extends State<InputPeserta>
           unit.text = '';
           prodi.text = '';
         });
-        // ignore: use_build_context_synchronously
-        ScaffoldMessenger.of(context).showSnackBar(
+        scaffold.currentState!.showSnackBar(
             const SnackBar(content: Text("Data Berhasil Di Ubah")));
-      } else {
-        // ignore: use_build_context_synchronously
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text("Data gagal Di Ubah. Mohon Coba Lagi.")));
-      }
+      }).catchError((error) {
+        scaffold.currentState!.showSnackBar(
+            SnackBar(content: Text("Data gagal Di Ubah. $error")));
+      });
     }
   }
 
@@ -256,7 +346,7 @@ class _InputPesertaState extends State<InputPeserta>
     setState(() {
       e1 = List.from(output);
     });
-    return compare(e1!).toUpperCase();
+    return compare(e1!);
   }
 
   String compare(List currEmb) {
@@ -287,6 +377,7 @@ class _InputPesertaState extends State<InputPeserta>
     bool notNull = true,
     bool regexNoSpace = false,
     int minLengthValues = 5,
+    bool obsecureText = false,
   }) {
     String? validator(String? text) {
       final regexNoSpacing = RegExp(r'^[a-zA-Z0-9_\-=@,\.;]+$');
@@ -309,6 +400,7 @@ class _InputPesertaState extends State<InputPeserta>
     return Container(
       margin: const EdgeInsets.fromLTRB(0, 5, 0, 5),
       child: TextFormField(
+        obscureText: obsecureText,
         controller: controller,
         keyboardType: keyboardType,
         validator: validator,
@@ -324,49 +416,54 @@ class _InputPesertaState extends State<InputPeserta>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Data Mahasiswa"),
-      ),
-      body: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 300),
-        child: isCreateData ? showForm(context) : showData(context),
-      ),
-      floatingActionButton: !isCreateData
-          ? ElevatedButton.icon(
-              icon: const Icon(Icons.add),
-              label: const Text("Tambah Mahasiswa"),
-              onPressed: () {
-                setState(() {
-                  isCreateData = !isCreateData;
-                });
-              },
-            )
-          : Row(mainAxisAlignment: MainAxisAlignment.end, children: [
-              ElevatedButton.icon(
-                icon: const Icon(Icons.arrow_back),
-                label: const Text("Kembali"),
-                onPressed: () async {
+    return ScaffoldMessenger(
+      key: scaffold,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text("Data Mahasiswa"),
+        ),
+        body: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 300),
+          child: isCreateData ? showForm(context) : showData(context),
+        ),
+        floatingActionButton: !isCreateData
+            ? ElevatedButton.icon(
+                icon: const Icon(Icons.add),
+                label: const Text("Tambah Mahasiswa"),
+                onPressed: () {
                   setState(() {
+                    peserta = null;
                     isCreateData = !isCreateData;
-                    imageFile = null;
-                    e1 = null;
-                    nim.text = '';
-                    nama.text = '';
-                    semester.text = '';
-                    unit.text = '';
-                    prodi.text = '';
                   });
                 },
-              ),
-              const SizedBox(width: 10),
-              ElevatedButton.icon(
-                icon: Icon(peserta == null ? Icons.save : Icons.edit),
-                label: Text(peserta == null ? "Simpan" : "Ubah"),
-                onPressed:
-                    peserta == null ? handleSimpanData : handleUpdateData,
-              ),
-            ]),
+              )
+            : Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.arrow_back),
+                  label: const Text("Kembali"),
+                  onPressed: () async {
+                    setState(() {
+                      peserta = null;
+                      isCreateData = !isCreateData;
+                      imageFile = null;
+                      e1 = null;
+                      nim.text = '';
+                      nama.text = '';
+                      semester.text = '';
+                      unit.text = '';
+                      prodi.text = '';
+                      userID = null;
+                    });
+                  },
+                ),
+                const SizedBox(width: 10),
+                ElevatedButton.icon(
+                  icon: Icon(peserta == null ? Icons.save : Icons.edit),
+                  label: Text(peserta == null ? "Simpan" : "Ubah"),
+                  onPressed: peserta == null ? simpanData : handleUpdateData,
+                ),
+              ]),
+      ),
     );
   }
 
@@ -391,13 +488,23 @@ class _InputPesertaState extends State<InputPeserta>
                     ),
                   ),
                 ),
-              Center(
-                child: ElevatedButton.icon(
-                  onPressed: handleRekamWajah,
-                  icon: const Icon(Icons.camera_alt),
-                  label: const Text("Rekam Wajah"),
+              if (peserta != null)
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  child: SizedBox(
+                    width: MediaQuery.of(context).size.width * 0.3,
+                    child: Image.network(peserta!.foto!,
+                        fit: BoxFit.fitWidth, width: 50),
+                  ),
                 ),
-              ),
+              if (peserta == null)
+                Center(
+                  child: ElevatedButton.icon(
+                    onPressed: handleRekamWajah,
+                    icon: const Icon(Icons.camera_alt),
+                    label: const Text("Rekam Wajah"),
+                  ),
+                ),
               textField(
                 controller: nim,
                 label: "Nim",
@@ -411,6 +518,17 @@ class _InputPesertaState extends State<InputPeserta>
                   minLengthValues: 1),
               textField(controller: unit, label: "Unit"),
               textField(controller: prodi, label: "Prodi"),
+              if (peserta == null)
+                textField(
+                  controller: email,
+                  label: "Email",
+                  keyboardType: TextInputType.emailAddress,
+                ),
+              if (peserta == null)
+                textField(
+                    controller: password,
+                    label: "Password",
+                    obsecureText: true),
             ],
           ),
         ),
@@ -422,17 +540,11 @@ class _InputPesertaState extends State<InputPeserta>
     return Column(
       children: [
         Container(
-          margin: const EdgeInsets.only(top: 10, bottom: 10),
+          margin: const EdgeInsets.only(top: 15, bottom: 10),
           padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: const TextField(
-            decoration: InputDecoration(
-              hintText: "Cari Mahasiswa",
-              suffixIcon: Icon(Icons.search),
-              contentPadding: EdgeInsets.symmetric(horizontal: 15),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.all(Radius.circular(25)),
-              ),
-            ),
+          child: const Text(
+            "Data Mahasiswa Absensi",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
           ),
         ),
         const Padding(
@@ -445,34 +557,38 @@ class _InputPesertaState extends State<InputPeserta>
             height: MediaQuery.of(context).size.height,
             padding:
                 const EdgeInsets.only(bottom: 10, left: 10, right: 10, top: 5),
-            child: dataBuilder(),
+            child: dataStreamBuilder(),
           ),
         ),
       ],
     );
   }
 
-  Widget dataBuilder() {
-    return FutureBuilder<List<Mahasiswa?>>(
-      future: getData(),
+  Widget dataStreamBuilder() {
+    return StreamBuilder<QuerySnapshot<Map<String, Object?>>>(
+      stream: FirestoreDatabase.collection("users")
+          .where("role", isEqualTo: "mahasiswa")
+          .snapshots(includeMetadataChanges: true),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.done) {
-          if (snapshot.data != null) {
-            return ListView.builder(
-              itemCount: snapshot.data!.length,
-              itemBuilder: (context, index) {
-                return dataList(context, snapshot.data![index]);
-              },
-            );
-          } else {
-            return const Center(
-              child: Text("Data Tidak Ditemukan."),
-            );
-          }
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(),
+          );
         }
 
-        return const Center(
-          child: CircularProgressIndicator(),
+        if (snapshot.data == null || snapshot.data!.docs.isEmpty) {
+          return const Center(
+            child: Text("Data Tidak Ditemukan."),
+          );
+        }
+
+        return ListView(
+          children: snapshot.data!.docs
+              .map((DocumentSnapshot<Map<String, Object?>> document) {
+            Mahasiswa mhs = Mahasiswa.fromFirestoreMap(
+                document.id, document.data()!["info"] as Map<String, Object?>);
+            return dataList(context, mhs);
+          }).toList(),
         );
       },
     );
@@ -492,19 +608,25 @@ class _InputPesertaState extends State<InputPeserta>
         ),
         leading: Container(
           margin: const EdgeInsets.only(bottom: 10),
-          child: Image.file(File(mhs.foto!), fit: BoxFit.fitWidth, width: 50),
+          child: SizedBox(
+            width: 50,
+            height: 50,
+            child: mhs.foto != null
+                ? Image.network(mhs.foto!, fit: BoxFit.fitWidth)
+                : Image.asset("person.png", fit: BoxFit.fitWidth),
+          ),
         ),
         trailing: IconButton(
             onPressed: () {
               setState(() {
                 isCreateData = true;
-                imageFile = File(mhs.foto!);
                 peserta = mhs;
                 nim.text = mhs.nim!;
                 nama.text = mhs.nama!;
                 semester.text = mhs.semester!;
                 unit.text = mhs.unit!;
                 prodi.text = mhs.prodi!;
+                userID = mhs.uid;
               });
             },
             icon: const Icon(
@@ -512,19 +634,6 @@ class _InputPesertaState extends State<InputPeserta>
               color: Colors.green,
             )),
       ),
-    );
-  }
-
-  TableRow tableHead(List<String> columns) {
-    return TableRow(
-      decoration: const BoxDecoration(),
-      children: columns
-          .map((column) => TableCell(
-                verticalAlignment: TableCellVerticalAlignment.middle,
-                child: Text(column,
-                    style: const TextStyle(fontWeight: FontWeight.bold)),
-              ))
-          .toList(),
     );
   }
 }

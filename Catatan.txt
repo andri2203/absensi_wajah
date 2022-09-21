@@ -1,0 +1,16 @@
+1. Dibuat login khusus untuk mahasiswa, 
+   dan mahasiswa hanya bisa login dan 
+   rekam wajah.
+
+2. Admin juga masuk menggunakan login 
+   dan setelah login, admin akan masuk 
+   ke dalam halaman utama yang ada menu 
+   seperti kemaren sudah pas dan ada laporan.
+
+3. Data rekam wajah mahasiwa  harus tersimpan.
+   Berdasatkan absensi. Dan alpa juga terbaca.
+
+4. Aplikasi yang dibuat bisa membaca lokasi. 
+   Misalnya mahasiwa hanya dapat mengisinya 
+   saat mahasiswa berada di kampus aja. 
+   Baru bisa mahasiwa rekam.

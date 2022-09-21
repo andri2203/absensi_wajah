@@ -1,23 +1,23 @@
+List<String> listBulan = [
+  "Januari",
+  "Februari",
+  "Maret",
+  "April",
+  "Mei",
+  "Juni",
+  "Juli",
+  "Agustus",
+  "September",
+  "Oktober",
+  "November",
+  "Desember",
+];
+
 String dateTime(
   DateTime dateTime, {
   bool disabledDay = false,
   bool disabledHour = false,
 }) {
-  List<String> listBulan = [
-    "Januari",
-    "Februari",
-    "Maret",
-    "April",
-    "Mei",
-    "Juni",
-    "Juli",
-    "Agustus",
-    "September",
-    "Oktober",
-    "November",
-    "Desember",
-  ];
-
   String format(String dt) {
     return dt.length == 1 ? "0$dt" : dt;
   }

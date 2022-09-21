@@ -2,12 +2,15 @@ import 'dart:io';
 
 import 'package:absensi_wajah/resource/absensi.dart';
 import 'package:absensi_wajah/resource/mahasiswa.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
+
+import '../firebase/firestore.dart';
 
 class Laporan extends StatefulWidget {
   const Laporan({Key? key}) : super(key: key);
@@ -17,8 +20,6 @@ class Laporan extends StatefulWidget {
 }
 
 class _LaporanState extends State<Laporan> {
-  TableMahasiswa tableMahasiswa = TableMahasiswa();
-  TableAbsensi tableAbsensi = TableAbsensi();
   List<Map<String, Object?>> data = [];
   DateTime now = DateTime.now();
   List<String> listBulan = [
@@ -44,6 +45,18 @@ class _LaporanState extends State<Laporan> {
   String fieldJumlahHadir = "hadir";
   String fieldJumlahAlpa = "alpa";
   String fieldAbsensi = "absen";
+
+  // Firestore
+  CollectionReference<Map<String, dynamic>> refUsers =
+      FirestoreDatabase.collection("users");
+  CollectionReference<Map<String, dynamic>> refMataKuliah =
+      FirestoreDatabase.collection("mataKuliah");
+  CollectionReference<Map<String, dynamic>> refAbsensi =
+      FirestoreDatabase.collection("absensi");
+  String mk = "pilih";
+
+  final GlobalKey<ScaffoldMessengerState> scaffold =
+      GlobalKey<ScaffoldMessengerState>();
 
   @override
   void initState() {
@@ -90,28 +103,46 @@ class _LaporanState extends State<Laporan> {
   }
 
   Future<void> getData(BuildContext context) async {
+    if (mk == "pilih") {
+      scaffold.currentState!.showSnackBar(
+        const SnackBar(content: Text("Silahkan Pilih Mata Kuliah")),
+      );
+      return;
+    }
     int bulan = indexBulan + 1;
     DateTime startDay = DateTime(tahun, bulan, 1);
     DateTime endDay = bulan < 12
         ? DateTime(tahun, bulan + 1, 0, 23, 59, 59)
         : DateTime(tahun + 1, 1, 0, 23, 59, 59);
-    List<Absensi?> absensi = await tableAbsensi.getOneDayOnly(
-      startDay.millisecondsSinceEpoch,
-      endDay.millisecondsSinceEpoch,
-    );
-    List<Mahasiswa?> mahasiswa = (await tableMahasiswa.get())!;
-
+    List<Absensi> absensi = await refAbsensi
+        .where("masuk", isGreaterThan: startDay.millisecondsSinceEpoch)
+        .where("masuk", isLessThan: endDay.millisecondsSinceEpoch)
+        .where("kodeMK", isEqualTo: mk)
+        .orderBy("masuk", descending: true)
+        .get()
+        .then((value) => value.docs
+            .map((e) => Absensi.fromFirestore(e.data(), e.id))
+            .toList());
+    List<Mahasiswa> mahasiswa = await refUsers
+        .where("role", isEqualTo: "mahasiswa")
+        .orderBy("name")
+        .get()
+        .then((value) => value.docs
+            .map((e) => Mahasiswa.fromFirestoreMap(e.id, e.data()["info"]))
+            .toList());
+    Map<String, dynamic>? mtkl =
+        await refMataKuliah.doc(mk).get().then((value) => value.data());
     if (mounted) {
       if (indexLaporan == 1) {
-        dataRekapKehadiran(mahasiswa, absensi, context);
+        dataRekapKehadiran(mahasiswa, absensi, context, mtkl);
       } else {
-        dataRingkasanAbsensi(mahasiswa, absensi, context);
+        dataRingkasanAbsensi(mahasiswa, absensi, context, mtkl);
       }
     }
   }
 
   dataRekapKehadiran(List<Mahasiswa?> mahasiswa, List<Absensi?> absensi,
-      BuildContext context) async {
+      BuildContext context, Map<String, dynamic>? mtkl) async {
     int bulan = indexBulan + 1;
     DateTime endDay = bulan < 12
         ? DateTime(tahun, bulan + 1, 0, 23, 59, 59)
@@ -129,9 +160,8 @@ class _LaporanState extends State<Laporan> {
         int dayEpochEnd =
             DateTime(tahun, bulan, day, 23, 59, 59).millisecondsSinceEpoch;
 
-        List<Absensi?> dt = absensi
-            .where((val) => val!.idMahasiswa == mhs.id.toString())
-            .toList();
+        List<Absensi?> dt =
+            absensi.where((val) => val!.userID == mhs.uid).toList();
 
         for (var i = 0; i < dt.length; i++) {
           Absensi abs = dt[i]!;
@@ -167,7 +197,7 @@ class _LaporanState extends State<Laporan> {
                     pw.SizedBox(
                       height: 25,
                       child: pw.Text(
-                          "Laporan Rekap Kehadiran Bulan ${listBulan[indexBulan]} $tahun"),
+                          "Laporan Rekap Kehadiran ${mtkl!['matkul']} Bulan ${listBulan[indexBulan]} $tahun"),
                     ),
                     pw.Table(
                         border: pw.TableBorder.all(width: 1),
@@ -216,7 +246,7 @@ class _LaporanState extends State<Laporan> {
     await fileSave.writeAsBytes(await pdf.save());
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      scaffold.currentState!.showSnackBar(const SnackBar(
         content: Text("Berhasil Simpan Berkas"),
       ));
     }
@@ -247,12 +277,12 @@ class _LaporanState extends State<Laporan> {
   }
 
   dataRingkasanAbsensi(List<Mahasiswa?> mahasiswa, List<Absensi?> absensi,
-      BuildContext context) async {
+      BuildContext context, Map<String, dynamic>? mtkl) async {
     int bulan = indexBulan + 1;
     DateTime endDay = bulan < 12
         ? DateTime(tahun, bulan + 1, 0, 23, 59, 59)
         : DateTime(tahun + 1, 1, 0, 23, 59, 59);
-    List<Map<String, Object?>> maps = [];
+    List<Map<String, dynamic>> maps = [];
 
     for (var i = 0; i < mahasiswa.length; i++) {
       Mahasiswa mhs = mahasiswa[i]!;
@@ -260,8 +290,8 @@ class _LaporanState extends State<Laporan> {
 
       for (var day = 1; day <= endDay.day; day++) {
         List<Map<String, Object?>> dt = absensi
-            .where((val) => val!.idMahasiswa == mhs.id.toString())
-            .map((e) => e!.toMap())
+            .where((val) => val!.userID == mhs.uid)
+            .map((e) => e!.toFirestoreMap())
             .toList();
         List<Absensi> pisahPerTanggal = [];
         int startDayEpoch =
@@ -270,7 +300,7 @@ class _LaporanState extends State<Laporan> {
             DateTime(tahun, bulan, day, 23, 59, 59).millisecondsSinceEpoch;
 
         for (var i = 0; i < dt.length; i++) {
-          Absensi abs = Absensi.fromMap(dt[i]);
+          Absensi abs = Absensi.fromFirestore(dt[i], dt[i]["docID"] as String);
           if (abs.masuk! > startDayEpoch && abs.masuk! < endDayEpoch) {
             pisahPerTanggal.add(abs);
           }
@@ -299,13 +329,14 @@ class _LaporanState extends State<Laporan> {
                 margin: const pw.EdgeInsets.only(top: 20),
                 child: pw.Center(
                   child: pw.Text(
-                      "Laporan Ringkas Absensi Bulan ${listBulan[indexBulan]} $tahun"),
+                      "Laporan Ringkas Absensi ${mtkl!['matkul']} Bulan ${listBulan[indexBulan]} $tahun"),
                 ),
               ),
               pw.SizedBox(height: 10),
               ...maps.map<pw.Widget>(
                 (val) {
-                  Mahasiswa mhs = Mahasiswa.fromMap(
+                  Mahasiswa mhs = Mahasiswa.fromFirestoreMap(
+                      val[fieldMahasiswa]["uid"],
                       val[fieldMahasiswa] as Map<String, Object?>);
                   List<Map<String, Object?>> dt =
                       val[fieldAbsensi] as List<Map<String, Object?>>;
@@ -379,7 +410,7 @@ class _LaporanState extends State<Laporan> {
     await fileSave.writeAsBytes(await pdf.save());
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      scaffold.currentState!.showSnackBar(const SnackBar(
         content: Text("Berhasil Simpan Berkas"),
       ));
     }
@@ -387,49 +418,88 @@ class _LaporanState extends State<Laporan> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Laporan Absensi"),
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(12.0),
-        child: Column(
-          children: [
-            Container(
-              margin: const EdgeInsets.symmetric(vertical: 10),
-              child: Text(
-                "Laporan Absensi Periode ${listBulan[indexBulan]} $tahun",
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
+    return ScaffoldMessenger(
+      key: scaffold,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text("Laporan Absensi"),
+        ),
+        body: Padding(
+          padding: const EdgeInsets.all(12.0),
+          child: Column(
+            children: [
+              Container(
+                margin: const EdgeInsets.symmetric(vertical: 10),
+                child: Text(
+                  "Laporan Absensi Periode ${listBulan[indexBulan]} $tahun",
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
-            ),
-            formDate(),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                ElevatedButton.icon(
-                  onPressed: () => getData(context),
-                  icon: const Icon(Icons.picture_as_pdf),
-                  label: const Text("Ekspor Ke PDF"),
-                  style: ElevatedButton.styleFrom(),
-                ),
-              ],
-            ),
-            Container(
-              margin: const EdgeInsets.only(top: 15),
-              child: const Text(
-                "Riwayat Laporan",
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800,
+              formDate(),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  StreamBuilder<QuerySnapshot<Map<String, Object?>>>(
+                    stream: refMataKuliah.snapshots(),
+                    builder: ((context, snapshot) {
+                      if (snapshot.data == null || !snapshot.hasData) {
+                        return const Center(
+                          child: Text("Data Tidak Ditemukan."),
+                        );
+                      }
+
+                      return DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          focusColor: Colors.white,
+                          hint: const Text("Mata Kuliah"),
+                          value: mk,
+                          items: [
+                            const DropdownMenuItem<String>(
+                              value: "pilih",
+                              child: Text("Pilh Mata Kuliah"),
+                            ),
+                            ...snapshot.data!.docs.map((doc) {
+                              Map<String, dynamic> dt = doc.data();
+                              return DropdownMenuItem<String>(
+                                value: doc.id,
+                                child: Text('${dt["matkul"]}'),
+                              );
+                            }).toList(),
+                          ],
+                          onChanged: (value) {
+                            setState(() {
+                              mk = value!;
+                            });
+                          },
+                        ),
+                      );
+                    }),
+                  ),
+                  ElevatedButton.icon(
+                    onPressed: () => getData(context),
+                    icon: const Icon(Icons.picture_as_pdf),
+                    label: const Text("Ekspor Ke PDF"),
+                    style: ElevatedButton.styleFrom(),
+                  ),
+                ],
+              ),
+              Container(
+                margin: const EdgeInsets.only(top: 15),
+                child: const Text(
+                  "Riwayat Laporan",
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
-            ),
-            const Divider(),
-            dataBuilder(context),
-          ],
+              const Divider(),
+              dataBuilder(context),
+            ],
+          ),
         ),
       ),
     );

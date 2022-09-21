@@ -1,51 +1,51 @@
-import 'dart:convert';
 import 'dart:io';
 
-import 'package:absensi_wajah/screens/akun_admin.dart';
+import 'package:absensi_wajah/resource/user_profile.dart';
+import 'package:absensi_wajah/screens/mata_kuliah.dart';
 import 'package:absensi_wajah/utils/date_time.dart';
 import 'package:absensi_wajah/resource/absensi.dart';
-import 'package:absensi_wajah/resource/admin.dart';
 import 'package:absensi_wajah/resource/mahasiswa.dart';
 import 'package:absensi_wajah/screens/input_peserta.dart';
 import 'package:absensi_wajah/screens/laporan.dart';
-import 'package:absensi_wajah/screens/login.dart';
 import 'package:absensi_wajah/screens/presensi.dart';
 import 'package:absensi_wajah/screens/rekam_wajah.dart';
 import 'package:absensi_wajah/utils/model.dart';
 import 'package:absensi_wajah/utils/utils.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:google_ml_kit/google_ml_kit.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as imglib;
-import 'package:path_provider/path_provider.dart';
 import 'package:quiver/collection.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 
-class HalamanUtama extends StatefulWidget {
-  const HalamanUtama({Key? key, required this.title, required this.admin})
-      : super(key: key);
+import '../firebase/auth_service.dart';
+import '../firebase/firestore.dart';
+import 'akun_admin.dart';
 
-  final String title;
-  final Admin admin;
+class HalamanUtama extends StatefulWidget {
+  const HalamanUtama({Key? key, required this.user}) : super(key: key);
+
+  final UserProfile user;
 
   @override
   State<HalamanUtama> createState() => _HalamanUtamaState();
 }
 
 class _HalamanUtamaState extends State<HalamanUtama> {
-  Admin? admin;
+  UserProfile get user => widget.user;
   File? imageFile;
   Size imageSize = const Size(0, 0);
   dynamic scanResult;
-  TableMahasiswa tbMahasiswa = TableMahasiswa();
-  List<Map<String, Object?>> dataMahasiswa = [];
+  Map<String, Mahasiswa> dataMahasiswa = {};
   List<Absensi?> dtAbsensi = [];
-  TableAbsensi tbAbsensi = TableAbsensi();
   bool isLoading = false;
   late Mahasiswa mahasiswa;
   Absensi? absensi;
   late int waktu;
+
+  String mk = "pilih";
 
   List? e1;
   Interpreter? interpreter;
@@ -58,6 +58,13 @@ class _HalamanUtamaState extends State<HalamanUtama> {
   Directory? tempDir;
   bool isDetected = false;
 
+  CollectionReference<Map<String, dynamic>> refMataKuliah =
+      FirestoreDatabase.collection("mataKuliah");
+  CollectionReference<Map<String, dynamic>> refAbsensi =
+      FirestoreDatabase.collection("absensi");
+
+  final GlobalKey<ScaffoldMessengerState> snackbar =
+      GlobalKey<ScaffoldMessengerState>();
   final GlobalKey<FormState> form = GlobalKey<FormState>();
   final TextEditingController nim = TextEditingController();
   final TextEditingController nama = TextEditingController();
@@ -66,32 +73,15 @@ class _HalamanUtamaState extends State<HalamanUtama> {
   final TextEditingController prodi = TextEditingController();
   final TextEditingController kdAbsen = TextEditingController();
   final TextEditingController kdMK = TextEditingController();
+  String statusAbsensi = "masuk";
   String? seacrh;
 
   @override
   void initState() {
     super.initState();
-    start();
   }
 
-  void start() {
-    admin = widget.admin;
-    initJsonFile();
-    getDataMahasiswa();
-  }
-
-  initJsonFile() async {
-    tempDir = await getApplicationDocumentsDirectory();
-    String embPath = '${tempDir!.path}/emb.json';
-    jsonFile = File(embPath);
-    if (jsonFile.existsSync()) {
-      setState(() {
-        data = json.decode(jsonFile.readAsStringSync());
-      });
-    }
-  }
-
-  String recog(imglib.Image img) {
+  String recog(imglib.Image img, List<Map<String, Mahasiswa>> mhs) {
     if (interpreter != null) {
       List input = imageToByteListFloat32(img, 112, 128, 128);
       input = input.reshape([1, 112, 112, 3]);
@@ -102,47 +92,59 @@ class _HalamanUtamaState extends State<HalamanUtama> {
       setState(() {
         e1 = List.from(output);
       });
-      return compare(e1!).toUpperCase();
+      return compare(e1!, mhs);
     }
 
     return "Terjadi Kesalahan.";
   }
 
-  String compare(List currEmb) {
+  String compare(List currEmb, List<Map<String, Mahasiswa>> mhs) {
     //mengembalikan nama pemilik akun
     double minDist = 999;
     double currDist = 0.0;
     _predRes = "Tidak dikenali";
-    for (String label in data.keys) {
-      currDist = euclideanDistance(data[label], currEmb);
-      if (currDist <= threshold && currDist < minDist) {
-        minDist = currDist;
-        _predRes = label;
-        if (_verify == false) {
-          setState(() {
-            _verify = true;
-          });
+    for (var i = 0; i < mhs.length; i++) {
+      Map<String, Mahasiswa> dtMHS = mhs[i];
+      for (String label in dtMHS.keys) {
+        currDist = euclideanDistance(dtMHS[label]!.dataWajah!, currEmb);
+        if (currDist <= threshold && currDist < minDist) {
+          minDist = currDist;
+          _predRes = label;
+          if (_verify == false) {
+            setState(() {
+              _verify = true;
+            });
+          }
         }
       }
     }
+
     return _predRes;
   }
 
-  Future handleAbsenMasuk(BuildContext context, String? status) async {
-    getDataMahasiswa();
-    initJsonFile();
+  Future<void> handleAbsenMasuk(
+    BuildContext context,
+    String? status, {
+    List<QueryDocumentSnapshot<Map<String, Object?>>>? dataMhs,
+    List<QueryDocumentSnapshot<Map<String, Object?>>>? dataAbsensi,
+  }) async {
+    if (mk == "pilih") {
+      // ignore: use_build_context_synchronously
+      snackbar.currentState!.showSnackBar(
+          const SnackBar(content: Text("Silahan Pilih Mata Kuliah")));
+      return;
+    }
     setState(() {
       imageFile = null;
       e1 = null;
       interpreter = null;
       kdAbsen.text = '';
-      kdMK.text = '';
+      kdMK.text = mk;
       nim.text = '';
       nama.text = '';
       semester.text = '';
       unit.text = '';
       prodi.text = '';
-      absensi = null;
     });
     final files = (await Navigator.push<File>(
       context,
@@ -171,7 +173,22 @@ class _HalamanUtamaState extends State<HalamanUtama> {
         ),
       );
 
-      String? res;
+      List<Map<String, Mahasiswa>> listMHS = dataMhs == null
+          ? []
+          : dataMhs
+              .map((dt) => {
+                    dt.id: Mahasiswa.fromFirestoreMap(
+                        dt.id, dt.data()["info"] as Map<String, Object?>)
+                  })
+              .toList();
+      List<Map<String, Absensi>> listAbsensi = dataAbsensi == null
+          ? []
+          : dataAbsensi.map((dt) {
+              Absensi ab = Absensi.fromFirestore(dt.data(), dt.id);
+              return {ab.userID!: ab};
+            }).toList();
+
+      String res = "";
       Mahasiswa mhs;
       Face face;
       List<Face> faces = await faceDetector.processImage(image);
@@ -196,16 +213,39 @@ class _HalamanUtamaState extends State<HalamanUtama> {
           imglib.Image croppedImage = imglib.copyCrop(
               imageLoaded!, x.round(), y.round(), w.round(), h.round());
           croppedImage = imglib.copyResizeCropSquare(croppedImage, 112);
-          res = recog(croppedImage);
+          res = recog(croppedImage, listMHS);
           finalResult.add(res, face);
         }
 
-        if (res != "TIDAK DIKENALI") {
-          mhs = (await tbMahasiswa.getByNim(res!))!;
-          List<Absensi?> list = (await tbAbsensi.getByIdMahasiswa(mhs.id!))
-              .where((dt) => dt!.keluar == 0)
-              .toList();
-          Absensi? absen = list.isNotEmpty ? list.last : null;
+        if (res != "Tidak dikenali") {
+          Map<String, Mahasiswa> dtMHS = {};
+          Map<String, Absensi> dtAbs = {};
+
+          for (Map<String, Mahasiswa> dt1 in listMHS) {
+            for (String label in dt1.keys) {
+              if (label == res) {
+                dtMHS = dt1;
+              }
+            }
+          }
+
+          for (Map<String, Absensi> dt2 in listAbsensi) {
+            for (String label in dt2.keys) {
+              if (label == res) {
+                dtAbs = dt2;
+              }
+            }
+          }
+          mhs = dtMHS[res]!;
+          Absensi? absen = dtAbs[res];
+
+          if (absen != null && absen.keluar! > 0) {
+            setState(() {
+              imageFile = null;
+            });
+            snackbar.currentState!.showSnackBar(const SnackBar(
+                content: Text("Tidak Bisa Absen Kembali setelah keluar")));
+          }
 
           setState(() {
             isDetected = true;
@@ -219,39 +259,32 @@ class _HalamanUtamaState extends State<HalamanUtama> {
             mahasiswa = mhs;
             scanResult = res;
             waktu = DateTime.now().millisecondsSinceEpoch;
-            if (absen != null) {
-              absensi = absen.keluar == 0 ? absen : null;
-              kdMK.text = absen.id == null ? "" : absen.kodeMK!;
-            }
           });
+          if (absen != null) {
+            DateTime startDay = DateTime(DateTime.now().year,
+                DateTime.now().month, DateTime.now().day, 0, 0, 0);
+            DateTime endDay = DateTime(DateTime.now().year,
+                DateTime.now().month, DateTime.now().day, 23, 59, 59);
+            if (absen.masuk! > startDay.millisecondsSinceEpoch &&
+                absen.masuk! < endDay.millisecondsSinceEpoch &&
+                absen.keluar! == 0) {
+              setState(() {
+                statusAbsensi = "keluar";
+                absensi = absen.keluar == 0 ? absen : null;
+                kdMK.text = absen.kodeMK!;
+              });
+            } else {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setString("status", "Masuk");
+            }
+          }
         } else {
           // ignore: use_build_context_synchronously
-          ScaffoldMessenger.of(context).showSnackBar(
+          snackbar.currentState!.showSnackBar(
               const SnackBar(content: Text("Wajah Tidak Terdeteksi")));
         }
       }
     }
-  }
-
-  Future<void> getDataMahasiswa() async {
-    List<Map<String, Object?>> dt = [];
-    List<Mahasiswa?> maps = [];
-    maps = (await tbMahasiswa.get())!;
-
-    for (var i = 0; i < maps.length; i++) {
-      dt.add(maps[i]!.toMap());
-    }
-
-    setState(() {
-      dataMahasiswa = dt;
-    });
-  }
-
-  Future<List<Absensi?>> getDataAbsensi() async {
-    Map<String, int> date = startEndDay(DateTime.now());
-    List<Absensi?> maps = [];
-    maps = (await tbAbsensi.getOneDayOnly(date['start']!, date['end']!));
-    return maps;
   }
 
   Future<void> handleSimpanData() async {
@@ -268,23 +301,21 @@ class _HalamanUtamaState extends State<HalamanUtama> {
       }
     } else {
       // ignore: use_build_context_synchronously
-      ScaffoldMessenger.of(context).showSnackBar(
+      snackbar.currentState!.showSnackBar(
           const SnackBar(content: Text("Wajah Tidak Terdeteksi")));
     }
   }
 
   Future<void> simpanDataMasuk(String status) async {
     Map<String, dynamic> map = {
-      tbAbsensi.idMahasiswa: mahasiswa.id.toString(),
-      tbAbsensi.masuk: waktu,
-      tbAbsensi.keluar: 0,
-      tbAbsensi.status: status,
-      tbAbsensi.kodeMK: kdMK.text,
+      "userID": mahasiswa.uid,
+      "masuk": waktu,
+      "keluar": 0,
+      "status": "masuk",
+      "kodeMK": kdMK.text,
     };
 
-    Absensi? absensi = await tbAbsensi.add(Absensi.fromMap(map));
-
-    if (absensi != null) {
+    refAbsensi.add(map).then((_) {
       setState(() {
         isDetected = false;
         kdAbsen.text = "";
@@ -301,27 +332,22 @@ class _HalamanUtamaState extends State<HalamanUtama> {
         absensi = null;
       });
       // ignore: use_build_context_synchronously
-      ScaffoldMessenger.of(context).showSnackBar(
+      snackbar.currentState!.showSnackBar(
           const SnackBar(content: Text("Data Berhasil Disimpan")));
-    } else {
+    }).catchError((error) {
       // ignore: use_build_context_synchronously
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text("Data Gagal Disimpan")));
-    }
+      snackbar.currentState!
+          .showSnackBar(SnackBar(content: Text("Data Gagal Disimpan: $error")));
+    });
   }
 
   Future<void> simpanDataKeluar(String status) async {
     Map<String, dynamic> map = {
-      tbAbsensi.id: absensi!.id,
-      tbAbsensi.idMahasiswa: absensi!.idMahasiswa,
-      tbAbsensi.masuk: absensi!.masuk,
-      tbAbsensi.keluar: waktu,
-      tbAbsensi.status: "Keluar",
-      tbAbsensi.kodeMK: absensi!.kodeMK,
+      "keluar": waktu,
+      "status": "keluar",
     };
 
-    int update = await tbAbsensi.update(Absensi.fromMap(map));
-    if (update > 0) {
+    refAbsensi.doc(absensi!.docID).update(map).then((_) {
       setState(() {
         isDetected = false;
         kdAbsen.text = "";
@@ -334,18 +360,17 @@ class _HalamanUtamaState extends State<HalamanUtama> {
         waktu = 0;
         imageFile = null;
         e1 = null;
-        absensi = null;
         kdMK.text = "";
+        absensi = null;
       });
-
       // ignore: use_build_context_synchronously
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text("Data Berhasil Di Ubah")));
-    } else {
+      snackbar.currentState!.showSnackBar(const SnackBar(
+          content: Text("Selamat, Anda Telah Menyelesaikan MK")));
+    }).catchError((error) {
       // ignore: use_build_context_synchronously
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text("Gagal Merubah data. Silahkan Perikasa")));
-    }
+      snackbar.currentState!
+          .showSnackBar(SnackBar(content: Text("Data Gagal Disimpan: $error")));
+    });
   }
 
   Size imageSized(BuildContext context) {
@@ -354,78 +379,113 @@ class _HalamanUtamaState extends State<HalamanUtama> {
   }
 
   Future _logout() async {
-    final prefs = await SharedPreferences.getInstance();
-    final success = await prefs.remove("adminID");
-
-    if (mounted && success) {
-      Navigator.of(context).push(MaterialPageRoute(
-        builder: (context) => const Login(),
-      ));
-    }
+    Navigator.of(context).pop();
+    await AuthService.singOut();
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title),
-      ),
-      drawer: drawerComponent(context),
-      body: Stack(
-        children: [
-          if (isLoading == true)
-            Positioned(
-              top: 0,
-              left: 0,
-              child: Container(
+    return ScaffoldMessenger(
+      key: snackbar,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text("Admin Absensi"),
+          actions: [
+            StreamBuilder<QuerySnapshot<Map<String, Object?>>>(
+              stream: refMataKuliah.snapshots(),
+              builder: ((context, snapshot) {
+                if (snapshot.data == null || !snapshot.hasData) {
+                  return const Center(
+                    child: Text("Data Tidak Ditemukan."),
+                  );
+                }
+
+                return DropdownButtonHideUnderline(
+                  child: DropdownButton<String>(
+                    focusColor: Colors.white,
+                    dropdownColor: Colors.deepOrange,
+                    style: const TextStyle(color: Colors.white, fontSize: 16),
+                    iconEnabledColor: Colors.white,
+                    hint: const Text("Mata Kuliah"),
+                    value: mk,
+                    items: [
+                      const DropdownMenuItem<String>(
+                        value: "pilih",
+                        child: Text(
+                          "Pilh Mata Kuliah",
+                        ),
+                      ),
+                      ...snapshot.data!.docs.map((doc) {
+                        Map<String, dynamic> dt = doc.data();
+                        return DropdownMenuItem<String>(
+                          value: doc.id,
+                          child: Text(
+                            '${dt["matkul"]}',
+                          ),
+                        );
+                      }).toList(),
+                    ],
+                    onChanged: (value) {
+                      setState(() {
+                        mk = value!;
+                      });
+                    },
+                  ),
+                );
+              }),
+            ),
+          ],
+        ),
+        drawer: drawerComponent(context),
+        body: Stack(
+          children: [
+            if (isLoading == true)
+              Positioned(
+                top: 0,
+                left: 0,
+                child: Container(
+                  width: MediaQuery.of(context).size.width,
+                  height: MediaQuery.of(context).size.height,
+                  color: Colors.black54.withOpacity(0.5),
+                  child: const Center(child: CircularProgressIndicator()),
+                ),
+              ),
+            Card(
+              margin: const EdgeInsets.only(
+                left: 15,
+                right: 15,
+                bottom: 15,
+                top: 10,
+              ),
+              elevation: 5,
+              child: SizedBox(
                 width: MediaQuery.of(context).size.width,
-                height: MediaQuery.of(context).size.height,
-                color: Colors.black54.withOpacity(0.5),
-                child: const Center(child: CircularProgressIndicator()),
+                child: imageFile == null
+                    ? SizedBox(
+                        width: MediaQuery.of(context).size.width,
+                        child: userStream(),
+                      )
+                    : Column(
+                        children: [
+                          headerComponent(),
+                          imageComponent(context),
+                          buttonComponent(context),
+                          dataMahasiswaComponent(context),
+                        ],
+                      ),
               ),
             ),
-          Card(
-            margin: const EdgeInsets.only(
-              left: 15,
-              right: 15,
-              bottom: 15,
-              top: 10,
-            ),
-            elevation: 5,
-            child: SizedBox(
-              width: MediaQuery.of(context).size.width,
-              child: imageFile == null
-                  ? Column(
-                      children: [
-                        dateInfo(),
-                        absenMasukKeluar(context),
-                        Expanded(
-                          child: Container(
-                            width: MediaQuery.of(context).size.width,
-                            height: MediaQuery.of(context).size.height,
-                            padding: const EdgeInsets.only(
-                                bottom: 10, left: 10, right: 10, top: 5),
-                            child: dataBuilder(),
-                          ),
-                        ),
-                      ],
-                    )
-                  : Column(
-                      children: [
-                        headerComponent(),
-                        imageComponent(context),
-                        buttonComponent(context),
-                        dataMahasiswaComponent(context),
-                      ],
-                    ),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  Widget absenMasukKeluar(BuildContext context) {
+  Widget absenMasukKeluar(
+    BuildContext context, {
+    List<QueryDocumentSnapshot<Map<String, Object?>>>? dataMhs,
+    List<QueryDocumentSnapshot<Map<String, Object?>>>? dataAbsensi,
+  }) {
     return Padding(
       padding: const EdgeInsets.all(8.0),
       child: Row(
@@ -433,12 +493,22 @@ class _HalamanUtamaState extends State<HalamanUtama> {
         children: [
           ElevatedButton(
               onPressed: () {
-                handleAbsenMasuk(context, "Masuk");
+                handleAbsenMasuk(
+                  context,
+                  "Masuk",
+                  dataMhs: dataMhs,
+                  dataAbsensi: dataAbsensi,
+                );
               },
               child: const Text("Absen Masuk")),
           ElevatedButton(
               onPressed: () {
-                handleAbsenMasuk(context, "Keluar");
+                handleAbsenMasuk(
+                  context,
+                  "Keluar",
+                  dataMhs: dataMhs,
+                  dataAbsensi: dataAbsensi,
+                );
               },
               child: const Text(
                 "Absen Keluar",
@@ -481,7 +551,11 @@ class _HalamanUtamaState extends State<HalamanUtama> {
                 ),
                 _textField(label: "Unit", enabled: false, controller: unit),
                 _textField(label: "Prodi", enabled: false, controller: prodi),
-                _textField(label: "Kode MK", controller: kdMK),
+                _textField(
+                  label: "Kode MK",
+                  controller: kdMK,
+                  enabled: false,
+                ),
               ],
             ),
           ),
@@ -523,7 +597,7 @@ class _HalamanUtamaState extends State<HalamanUtama> {
         const SizedBox(width: 10),
         ElevatedButton.icon(
           icon: const Icon(Icons.save),
-          label: const Text("Simpan"),
+          label: Text(statusAbsensi.toUpperCase()),
           onPressed: handleSimpanData,
         ),
       ],
@@ -570,7 +644,7 @@ class _HalamanUtamaState extends State<HalamanUtama> {
             padding: const EdgeInsets.all(20),
             child: Center(
               child: Text(
-                "Selamat Datang, ${admin?.username}",
+                "Selamat Datang, ${user.name}",
                 style:
                     const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
@@ -599,6 +673,17 @@ class _HalamanUtamaState extends State<HalamanUtama> {
             ),
           ),
           ListTile(
+            title: const Text("Mata Kuliah"),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (context) {
+                if (interpreter != null && !interpreter!.isDeleted) {
+                  interpreter!.close();
+                }
+                return const MataKuliah();
+              }),
+            ),
+          ),
+          ListTile(
             title: const Text("Laporan"),
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (context) {
@@ -617,7 +702,9 @@ class _HalamanUtamaState extends State<HalamanUtama> {
                   if (interpreter != null && !interpreter!.isDeleted) {
                     interpreter!.close();
                   }
-                  return const AkunAdmin();
+                  return AkunAdmin(
+                    user: widget.user,
+                  );
                 }),
               );
               if (logout != null) _logout();
@@ -726,63 +813,107 @@ class _HalamanUtamaState extends State<HalamanUtama> {
     );
   }
 
-  Widget seacrhBar() {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: TextField(
-        onChanged: (value) {
-          setState(() {
-            seacrh = value;
-          });
-        },
-        decoration: const InputDecoration(
-          hintText: "Cari Mahasiswa",
-          suffixIcon: Icon(Icons.search),
-          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.all(Radius.circular(25)),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget dataBuilder() {
-    return FutureBuilder<List<Absensi?>>(
-      future: getDataAbsensi(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.done) {
-          if (snapshot.data != null) {
-            List<Absensi?> dataAbsensi = snapshot.data!;
-
-            return ListView.builder(
-              itemCount: dataAbsensi.length,
-              itemBuilder: (context, index) {
-                return dataList(context, dataAbsensi[index]);
-              },
-            );
-          } else {
-            return const Center(
-              child: Text("Data Tidak Ditemukan."),
-            );
-          }
+  Widget userStream() {
+    Map<String, int> date = startEndDay(DateTime.now());
+    return StreamBuilder<QuerySnapshot<Map<String, Object?>>>(
+      stream: FirestoreDatabase.collection("users")
+          .where("role", isEqualTo: "mahasiswa")
+          .orderBy("name")
+          .snapshots(includeMetadataChanges: true),
+      builder: (context, snapshot1) {
+        if (snapshot1.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(),
+          );
         }
 
-        return const Center(
-          child: CircularProgressIndicator(),
-        );
+        if (snapshot1.data == null || !snapshot1.hasData) {
+          return const Center(
+            child: Text("Data Tidak Ditemukan."),
+          );
+        }
+        return StreamBuilder<QuerySnapshot<Map<String, Object?>>>(
+            stream: refAbsensi
+                .where("masuk", isGreaterThan: date["start"])
+                .where("masuk", isLessThan: date["end"])
+                .where("kodeMK", isEqualTo: mk)
+                .orderBy("masuk", descending: true)
+                .snapshots(includeMetadataChanges: true),
+            builder: (context, snapshot2) {
+              return Column(
+                children: [
+                  dateInfo(),
+                  absenMasukKeluar(
+                    context,
+                    dataMhs: snapshot1.data!.docs,
+                    dataAbsensi:
+                        snapshot2.data == null ? [] : snapshot2.data!.docs,
+                  ),
+                  Expanded(
+                    child: Container(
+                      width: MediaQuery.of(context).size.width,
+                      height: MediaQuery.of(context).size.height,
+                      padding: const EdgeInsets.only(
+                          bottom: 10, left: 10, right: 10, top: 5),
+                      child: ListView.builder(
+                        itemCount: snapshot1.data!.docs.length,
+                        itemBuilder: (context, index1) {
+                          QueryDocumentSnapshot<Map<String, Object?>> dtUser =
+                              snapshot1.data!.docs[index1];
+                          Mahasiswa mhs = Mahasiswa.fromFirestoreMap(dtUser.id,
+                              dtUser.data()["info"] as Map<String, Object?>);
+                          List<Map<String, Absensi>> listAbsensi =
+                              snapshot2.data == null
+                                  ? []
+                                  : snapshot2.data!.docs.map((dt) {
+                                      Absensi ab = Absensi.fromFirestore(
+                                          dt.data(), dt.id);
+                                      return {ab.userID!: ab};
+                                    }).toList();
+                          if (listAbsensi.isNotEmpty) {
+                            Map<String, Absensi?> dataAbsensi = {};
+                            for (Map<String, Absensi> dd in listAbsensi) {
+                              if (dd[mhs.uid] != null) {
+                                dataAbsensi.putIfAbsent(
+                                    mhs.uid!, () => dd[mhs.uid]!);
+                              }
+                            }
+                            if (dataAbsensi[mhs.uid] != null) {
+                              return dataList(
+                                context,
+                                mhs,
+                                dataAbsensi[mhs.uid]!,
+                              );
+                            } else {
+                              return Card(
+                                child: ListTile(
+                                  title: Text(mhs.nama!),
+                                  subtitle: const Text("Belum Absen / Alpha"),
+                                ),
+                              );
+                            }
+                          } else {
+                            return Card(
+                              child: ListTile(
+                                title: Text(mhs.nama!),
+                                subtitle:
+                                    const Text("Silahkan Pilih Mata Kuliah"),
+                              ),
+                            );
+                          }
+                        },
+                      ),
+                    ),
+                  ),
+                ],
+              );
+            });
       },
     );
   }
 
-  Card dataList(BuildContext context, Absensi? absensi) {
-    int index = dataMahasiswa.indexWhere(
-      (element) => element[tbMahasiswa.id].toString() == absensi!.idMahasiswa,
-    );
-
-    Mahasiswa? mhs = Mahasiswa.fromMap(dataMahasiswa[index]);
-    DateTime masuk = DateTime.fromMillisecondsSinceEpoch(absensi!.masuk!);
+  Card dataList(BuildContext context, Mahasiswa mhs, Absensi absensi) {
+    DateTime masuk = DateTime.fromMillisecondsSinceEpoch(absensi.masuk!);
     DateTime keluar = DateTime.fromMillisecondsSinceEpoch(absensi.keluar!);
 
     return Card(
@@ -793,25 +924,27 @@ class _HalamanUtamaState extends State<HalamanUtama> {
             fontWeight: FontWeight.w800,
           ),
         ),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              "Kode Mata Kuliah (${absensi.kodeMK!.toUpperCase()})",
-              style: const TextStyle(color: Colors.lightBlue),
-            ),
-            Text(
-              "Masuk ${dateTime(masuk)}",
-              style: const TextStyle(color: Colors.lightGreen),
-            ),
-            Text(
-              absensi.keluar! == 0
-                  ? "Sedang Melangsungkan Pembelajaran"
-                  : "Keluar ${dateTime(keluar)}",
-              style: TextStyle(color: Colors.redAccent[700]),
-            ),
-          ],
-        ),
+        subtitle: mhs.uid == absensi.userID
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    "Kode Mata Kuliah (${absensi.kodeMK!.toUpperCase()})",
+                    style: const TextStyle(color: Colors.lightBlue),
+                  ),
+                  Text(
+                    "Masuk ${dateTime(masuk)}",
+                    style: const TextStyle(color: Colors.lightGreen),
+                  ),
+                  Text(
+                    absensi.keluar! == 0
+                        ? "Sedang Melangsungkan Pembelajaran"
+                        : "Keluar ${dateTime(keluar)}",
+                    style: TextStyle(color: Colors.redAccent[700]),
+                  ),
+                ],
+              )
+            : const Text("Mahasiswa Belum Masuk Kelas"),
       ),
     );
   }
